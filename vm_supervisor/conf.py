@@ -1,3 +1,4 @@
+import ipaddress
 import logging
 import os
 import re
@@ -5,7 +6,7 @@ from enum import Enum
 from os.path import isfile, join, exists, abspath, isdir
 from pathlib import Path
 from subprocess import check_output
-from typing import NewType, Optional, List, Dict, Any
+from typing import NewType, Optional, List, Dict, Any, Iterable
 
 from pydantic import BaseSettings, Field
 
@@ -27,7 +28,11 @@ def etc_resolv_conf_dns_servers():
                 yield ip[0]
 
 
-def resolvectl_dns_servers(interface):
+def _call_resolvectl_dns(interface: str) -> bytes:
+    return check_output(["/usr/bin/resolvectl", "dns", "-i", interface])
+
+
+def resolvectl_dns_servers(interface: str) -> Iterable[str]:
     """
     On Ubuntu 22.04, DNS servers can be queries using `resolvectl dns`.
      The command `systemd-resolve` used in Ubuntu 20.04 is not found.
@@ -36,10 +41,15 @@ def resolvectl_dns_servers(interface):
     Link 2 (eth0): 67.207.67.3 67.207.67.2
 
     """
-    output: bytes = check_output(["/usr/bin/resolvectl", "dns", "-i", interface])
-    link, servers = output.split(b":")
-    for server in servers.split(b" "):
-        yield server.decode().strip()
+    output = _call_resolvectl_dns(interface)
+    # Only split on the first colon to support
+    link, servers = output.split(b":", maxsplit=1)
+    for server in servers.split():
+        server = server.decode()
+        ip_addr = ipaddress.ip_address(server)
+        # Ignore IPv6 addresses as long as VMs do not support IPv6 networking.
+        if isinstance(ip_addr, ipaddress.IPv4Address):
+            yield server.strip()
 
 
 class Settings(BaseSettings):
