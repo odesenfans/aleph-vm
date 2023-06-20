@@ -8,13 +8,29 @@ from .ipaddresses import IPv4NetworkWithInterfaces
 logger = logging.getLogger(__name__)
 
 
+def _read_proc_file_value(config_file: Path) -> int:
+    return int(config_file.read_text())
+
+
 def get_ipv4_forwarding_state() -> int:
-    """Reads the current ipv4 forwarding setting from the hosts, converts it to int and returns it"""
-    return int(Path("/proc/sys/net/ipv4/ip_forward").read_text())
+    """
+    Reads the current IPv4 forwarding setting from the hosts,
+    converts it to int and returns it.
+    """
+    return _read_proc_file_value(Path("/proc/sys/net/ipv4/ip_forward"))
+
+
+def get_ipv6_forwarding_state() -> int:
+    """
+    Reads the current IPv6 forwarding setting from the hosts,
+    converts it to int and returns it.
+    """
+    return _read_proc_file_value(Path("/proc/sys/net/ipv6/conf/all/forwarding"))
 
 
 class Network:
     ipv4_forward_state_before_setup: int
+    ipv6_forward_state_before_setup: int
     address_pool: IPv4NetworkWithInterfaces = IPv4NetworkWithInterfaces("172.16.0.0/12")
     network_size: int
     external_interface: str
@@ -24,17 +40,32 @@ class Network:
         return subnets[vm_id]
 
     def enable_ipv4_forwarding(self) -> None:
-        """Saves the hosts IPv4 forwarding state, and if it was disabled, enables it"""
+        """Saves the host IPv4 forwarding state, and if it was disabled, enables it"""
         logger.debug("Enabling IPv4 forwarding")
         self.ipv4_forward_state_before_setup = get_ipv4_forwarding_state()
         if not self.ipv4_forward_state_before_setup:
             Path("/proc/sys/net/ipv4/ip_forward").write_text("1")
+
+    def enable_ipv6_forwarding(self) -> None:
+        """Saves the host IPv6 forwarding state, and if it was disabled, enables it"""
+        logger.debug("Enabling IPv6 forwarding")
+        self.ipv6_forward_state_before_setup = get_ipv6_forwarding_state()
+        if not self.ipv6_forward_state_before_setup:
+            Path("/proc/sys/net/ipv6/conf/all/forwarding").write_text("1")
 
     def reset_ipv4_forwarding_state(self) -> None:
         """Returns the hosts IPv4 forwarding state how it was before we enabled it"""
         logger.debug("Resetting IPv4 forwarding state to state before we enabled it")
         if self.ipv4_forward_state_before_setup != get_ipv4_forwarding_state():
             Path("/proc/sys/net/ipv4/ip_forward").write_text(
+                str(self.ipv4_forward_state_before_setup)
+            )
+
+    def reset_ipv6_forwarding_state(self) -> None:
+        """Returns the hosts IPv6 forwarding state how it was before we enabled it"""
+        logger.debug("Resetting IPv4 forwarding state to state before we enabled it")
+        if self.ipv6_forward_state_before_setup != get_ipv6_forwarding_state():
+            Path("/proc/sys/net/ipv6/ip_forward").write_text(
                 str(self.ipv4_forward_state_before_setup)
             )
 
@@ -55,6 +86,7 @@ class Network:
     def teardown(self) -> None:
         teardown_nftables()
         self.reset_ipv4_forwarding_state()
+        self.reset_ipv6_forwarding_state()
 
     async def create_tap(self, vm_id: int) -> TapInterface:
         """Create TAP interface to be used by VM"""
